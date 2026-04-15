@@ -8,7 +8,13 @@
 import asyncio
 from aiogram import Router, types, F, Bot
 from config import ADMIN_IDS
-from connectors import TG_GROUP_IDS, get_connector_for_tg, Connector
+from connectors import (
+    get_tg_group_ids,
+    get_connector_for_tg,
+    pair_from_tg,
+    disconnect_from_tg,
+    Connector,
+)
 from formatter import format_tg_to_max, format_quote, get_display_name_tg
 from max_sender import send_text as max_send_text, edit_text as max_edit_text, send_album
 from media import (
@@ -35,6 +41,38 @@ ALBUM_WAIT_SECONDS = 2.0  # ждём 2 секунды чтобы собрать 
 
 def resolve_connector_for_tg_message(message: types.Message) -> Connector | None:
     return get_connector_for_tg(message.chat.id, message.message_thread_id)
+
+
+def parse_connect_secret(text: str | None) -> str | None:
+    if not text:
+        return None
+    stripped = text.strip()
+    if not stripped.lower().startswith("/connect"):
+        return None
+    parts = stripped.split(maxsplit=1)
+    if len(parts) < 2:
+        return ""
+    return parts[1].strip()
+
+
+def parse_disconnect_secret(text: str | None) -> str | None:
+    if not text:
+        return None
+    stripped = text.strip()
+    if not stripped.lower().startswith("/disconnect"):
+        return None
+    parts = stripped.split(maxsplit=1)
+    if len(parts) < 2:
+        return ""
+    return parts[1].strip()
+
+
+async def is_tg_group_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+    except Exception:
+        return False
+    return member.status in ("creator", "administrator")
 
 
 # ─────────────────────────────────────────────
@@ -93,7 +131,7 @@ async def notify_admin_large_file(sender_name: str, file_name: str,
 @router.message(F.forum_topic_created)
 async def handle_topic_created(message: types.Message) -> None:
     """Кто-то создал новый топик — запоминаем его название."""
-    if message.chat.id not in TG_GROUP_IDS:
+    if message.chat.id not in get_tg_group_ids():
         return
     name = message.forum_topic_created.name
     thread_id = message.message_thread_id
@@ -105,7 +143,7 @@ async def handle_topic_created(message: types.Message) -> None:
 @router.message(F.forum_topic_edited)
 async def handle_topic_edited(message: types.Message) -> None:
     """Кто-то переименовал топик — обновляем кэш."""
-    if message.chat.id not in TG_GROUP_IDS:
+    if message.chat.id not in get_tg_group_ids():
         return
     thread_id = message.message_thread_id
     if thread_id and message.forum_topic_edited.name:
@@ -263,10 +301,44 @@ async def _flush_album(gid: str, bot: Bot) -> None:
 @router.message()
 async def handle_tg_message(message: types.Message, bot: Bot) -> None:
     """Обработать новое сообщение из TG-группы."""
-    if message.chat.id not in TG_GROUP_IDS:
+    if message.from_user and message.from_user.is_bot:
         return
 
-    if message.from_user and message.from_user.is_bot:
+    connect_secret = parse_connect_secret(message.text or message.caption)
+    if connect_secret is not None:
+        if not connect_secret:
+            await message.answer("Использование: /connect <секрет>")
+            return
+        if not message.from_user or not await is_tg_group_admin(bot, message.chat.id, message.from_user.id):
+            await message.answer("Только администратор группы может выполнять /connect.")
+            return
+        try:
+            result = pair_from_tg(connect_secret, message.chat.id, message.message_thread_id)
+            await message.answer(result.message)
+            if result.completed and result.connector.max_group_id is not None:
+                await max_send_text(result.connector.max_group_id, "Связь установлена.")
+        except Exception as e:
+            await message.answer(f"Ошибка привязки: {e}")
+        return
+
+    disconnect_secret = parse_disconnect_secret(message.text or message.caption)
+    if disconnect_secret is not None:
+        if not disconnect_secret:
+            await message.answer("Использование: /disconnect <секрет>")
+            return
+        if not message.from_user or not await is_tg_group_admin(bot, message.chat.id, message.from_user.id):
+            await message.answer("Только администратор группы может выполнять /disconnect.")
+            return
+        try:
+            result = disconnect_from_tg(disconnect_secret, message.chat.id, message.message_thread_id)
+            await message.answer(result.message)
+            if result.connector.max_group_id is not None:
+                await max_send_text(result.connector.max_group_id, "Связь отключена.")
+        except Exception as e:
+            await message.answer(f"Ошибка отключения: {e}")
+        return
+
+    if message.chat.id not in get_tg_group_ids():
         return
 
     connector = resolve_connector_for_tg_message(message)
@@ -369,7 +441,7 @@ async def handle_tg_message(message: types.Message, bot: Bot) -> None:
 @router.edited_message()
 async def handle_tg_edit(message: types.Message) -> None:
     """Сообщение отредактировали в TG → редактируем зеркало в MAX."""
-    if message.chat.id not in TG_GROUP_IDS:
+    if message.chat.id not in get_tg_group_ids():
         return
 
     if message.from_user and message.from_user.is_bot:

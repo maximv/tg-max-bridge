@@ -32,14 +32,16 @@ services:
       - PYTHONUNBUFFERED=1
       # ↑ Отключает буферизацию вывода Python —
       #   логи сразу видны в docker logs, без задержки
+      - CONNECTORS_FILE=/bridge/state/connectors.json
+      # ↑ Файл коннекторов хранится в отдельной директории state
 
     depends_on:
       - redis
     # ↑ Сначала запустить Redis, потом бота
 
     volumes:
-      - ./connectors.json:/bridge/connectors.json:ro
-    # ↑ Монтируем локальный connectors.json в контейнер только для чтения
+      - ./state:/bridge/state
+    # ↑ Монтируем директорию состояния; connectors.json создастся автоматически
 
   # --- Контейнер с Redis ---
   redis:

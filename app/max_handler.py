@@ -5,13 +5,69 @@
 import asyncio
 import httpx
 from config import MAX_BOT_TOKEN, MAX_API_URL, ADMIN_IDS
-from connectors import get_connector_for_max
+from connectors import get_connector_for_max, pair_from_max, disconnect_from_max
 from formatter import format_max_to_tg, format_quote, get_display_name_max
 from tg_sender import enqueue_message
 from media import get_max_media_info, format_size, MAX_FILE_LIMIT
+from max_sender import send_text as max_send_text, get_client as get_max_client
 from mapping import get_tg_id, is_processed, save_max_marker, get_max_marker
 
 _marker: int | None = None
+
+
+def parse_connect_secret(text: str) -> str | None:
+    stripped = text.strip()
+    if not stripped.lower().startswith("/connect"):
+        return None
+    parts = stripped.split(maxsplit=1)
+    if len(parts) < 2:
+        return ""
+    return parts[1].strip()
+
+
+def parse_disconnect_secret(text: str) -> str | None:
+    stripped = text.strip()
+    if not stripped.lower().startswith("/disconnect"):
+        return None
+    parts = stripped.split(maxsplit=1)
+    if len(parts) < 2:
+        return ""
+    return parts[1].strip()
+
+
+def _sender_user_id(sender: dict) -> int | None:
+    for key in ("user_id", "id"):
+        value = sender.get(key)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+async def is_max_group_admin(chat_id: int, sender: dict) -> bool:
+    user_id = _sender_user_id(sender)
+    if user_id is None:
+        return False
+
+    http = await get_max_client()
+    try:
+        resp = await http.get(
+            f"{MAX_API_URL}/chats/{chat_id}/admins",
+            headers={"Authorization": MAX_BOT_TOKEN},
+        )
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        admins = data.get("admins", data.get("participants", []))
+        for admin in admins:
+            for key in ("user_id", "id"):
+                if admin.get(key) is not None and int(admin.get(key)) == user_id:
+                    return True
+    except Exception:
+        return False
+    return False
 
 
 def get_all_images(attachments: list) -> list[dict]:
@@ -142,20 +198,63 @@ async def handle_message_created(update: dict) -> None:
     body = message.get("body", {})
     sender = message.get("sender", {})
     recipient = message.get("recipient", {})
+    text = body.get("text") or ""
 
     chat_id = recipient.get("chat_id")
-    connector = get_connector_for_max(chat_id)
-    if not connector:
-        return
-
     if sender.get("is_bot"):
         return
 
     mid = body.get("mid", "")
+    connector = get_connector_for_max(chat_id)
+    connect_secret = parse_connect_secret(text)
+    if connect_secret is not None:
+        if not await is_max_group_admin(chat_id, sender):
+            await max_send_text(chat_id=chat_id, text="Только администратор группы может выполнять /connect.")
+            return
+        secret = connect_secret
+        if not secret:
+            await max_send_text(chat_id=chat_id, text="Использование: /connect <секрет>")
+            return
+        try:
+            result = pair_from_max(secret, chat_id)
+            await max_send_text(chat_id=chat_id, text=result.message)
+            if result.completed and result.connector.tg_group_id is not None:
+                await enqueue_message(
+                    chat_id=result.connector.tg_group_id,
+                    text="Связь установлена.",
+                    message_thread_id=result.connector.tg_topic_id,
+                )
+        except Exception as e:
+            await max_send_text(chat_id=chat_id, text=f"Ошибка привязки: {e}")
+        return
+
+    disconnect_secret = parse_disconnect_secret(text)
+    if disconnect_secret is not None:
+        if not await is_max_group_admin(chat_id, sender):
+            await max_send_text(chat_id=chat_id, text="Только администратор группы может выполнять /disconnect.")
+            return
+        if not disconnect_secret:
+            await max_send_text(chat_id=chat_id, text="Использование: /disconnect <секрет>")
+            return
+        try:
+            result = disconnect_from_max(disconnect_secret, chat_id)
+            await max_send_text(chat_id=chat_id, text=result.message)
+            if result.connector.tg_group_id is not None:
+                await enqueue_message(
+                    chat_id=result.connector.tg_group_id,
+                    text="Связь отключена.",
+                    message_thread_id=result.connector.tg_topic_id,
+                )
+        except Exception as e:
+            await max_send_text(chat_id=chat_id, text=f"Ошибка отключения: {e}")
+        return
+
+    if not connector:
+        return
+
     if await is_processed(f"max:{mid}", connector.key):
         return
 
-    text = body.get("text") or ""
     attachments = body.get("attachments", [])
     media_info = get_max_media_info(attachments)
 

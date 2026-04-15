@@ -1,5 +1,6 @@
 .env
 connectors.json
+state/
 __pycache__/
 *.pyc
 *.docx

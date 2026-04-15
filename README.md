@@ -33,7 +33,7 @@
 ```
 bridge/
 ├── .env.example          ← шаблон настроек (заполните свой .env)
-├── connectors.json       ← связи TG group+topic ↔ MAX group
+├── state/connectors.json ← связи TG group+topic ↔ MAX group (создаётся автоматически)
 ├── docker-compose.yml    ← запуск бота + Redis
 ├── Dockerfile            ← сборка контейнера
 ├── requirements.txt      ← Python-зависимости
@@ -67,13 +67,15 @@ cp .env.example .env
 nano .env   # заполните токены и ID чатов
 ```
 
-Заполните токены ботов. Маршрутизация чатов теперь хранится не в `.env`, а в `connectors.json`.
+Заполните токены ботов. Маршрутизация чатов хранится в `state/connectors.json`.
+Файл создаётся автоматически при первом `/connect`, но можно подготовить заранее.
 
-### 3. Создайте файл connectors.json
+### 3. (Опционально) Создайте стартовый файл connectors.json
 
 ```bash
-cp connectors.json.example connectors.json
-nano connectors.json
+mkdir -p state
+cp connectors.json.example state/connectors.json
+nano state/connectors.json
 ```
 
 Пример одного коннектора:
@@ -155,7 +157,13 @@ docker exec -it tg-max-redis redis-cli ping
 | Команда | Описание | Где работает |
 |---------|----------|-------------|
 | `/status` | Uptime и размер очереди | Личка с ботом |
+| `/connect <секрет>` | Автопривязка TG↔MAX по секрету (только админы) | Группы TG и MAX |
+| `/disconnect <секрет>` | Разрыв связи по секрету (только админы) | Группы TG и MAX |
 
 ## Лицензия
 
 MIT — используйте как хотите.
+
+## Полезно
+
+- Инструкция по получению ID и автопривязке: [docs/ids-and-pairing.md](docs/ids-and-pairing.md)
