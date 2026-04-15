@@ -323,14 +323,18 @@ async def handle_tg_message(message: types.Message, bot: Bot) -> None:
 
     disconnect_secret = parse_disconnect_secret(message.text or message.caption)
     if disconnect_secret is not None:
-        if not disconnect_secret:
-            await message.answer("Использование: /disconnect <секрет>")
-            return
         if not message.from_user or not await is_tg_group_admin(bot, message.chat.id, message.from_user.id):
             await message.answer("Только администратор группы может выполнять /disconnect.")
             return
         try:
-            result = disconnect_from_tg(disconnect_secret, message.chat.id, message.message_thread_id)
+            secret = disconnect_secret
+            if not secret:
+                current_connector = resolve_connector_for_tg_message(message)
+                if not current_connector:
+                    await message.answer("Для этой TG-группы/топика нет активной связи.")
+                    return
+                secret = current_connector.name
+            result = disconnect_from_tg(secret, message.chat.id, message.message_thread_id)
             await message.answer(result.message)
             if result.connector.max_group_id is not None:
                 await max_send_text(result.connector.max_group_id, "Связь отключена.")

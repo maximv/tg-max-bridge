@@ -278,11 +278,14 @@ async def handle_message_created(update: dict) -> None:
         if not await is_max_group_admin(chat_id, sender):
             await max_send_text(chat_id=chat_id, text="Только администратор группы может выполнять /disconnect.")
             return
-        if not disconnect_secret:
-            await max_send_text(chat_id=chat_id, text="Использование: /disconnect <секрет>")
-            return
         try:
-            result = disconnect_from_max(disconnect_secret, chat_id)
+            secret = disconnect_secret
+            if not secret:
+                if not connector:
+                    await max_send_text(chat_id=chat_id, text="Для этой MAX-группы нет активной связи.")
+                    return
+                secret = connector.name
+            result = disconnect_from_max(secret, chat_id)
             await max_send_text(chat_id=chat_id, text=result.message)
             if result.connector.tg_group_id is not None:
                 await enqueue_message(
