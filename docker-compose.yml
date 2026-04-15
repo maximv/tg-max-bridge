@@ -37,6 +37,10 @@ services:
       - redis
     # ↑ Сначала запустить Redis, потом бота
 
+    volumes:
+      - ./connectors.json:/bridge/connectors.json:ro
+    # ↑ Монтируем локальный connectors.json в контейнер только для чтения
+
   # --- Контейнер с Redis ---
   redis:
     image: redis:7-alpine
