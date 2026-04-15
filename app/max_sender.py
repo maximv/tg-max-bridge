@@ -2,7 +2,7 @@
 # MAX не имеет Python-библиотеки, поэтому используем httpx (HTTP-запросы)
 
 import httpx
-from config import MAX_BOT_TOKEN, MAX_API_URL, MAX_GROUP_ID
+from config import MAX_BOT_TOKEN, MAX_API_URL
 
 # Клиент для HTTP-запросов (создаём один раз, используем везде)
 client: httpx.AsyncClient | None = None

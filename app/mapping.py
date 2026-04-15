@@ -11,51 +11,37 @@ from config import REDIS_URL, MSG_TTL
 pool = redis.from_url(REDIS_URL, decode_responses=True)
 
 
-async def save_mapping(tg_msg_id: int, max_msg_id: str) -> None:
-    """Сохранить связку: TG-сообщение ↔ MAX-сообщение."""
-    # Создаём два ключа — чтобы искать в обе стороны
-    tg_key = f"TG:{tg_msg_id}"       # например "TG:86"
-    max_key = f"MAX:{max_msg_id}"     # например "MAX:mid.123456"
+def _map_prefix(connector_key: str | None) -> str:
+    safe_key = connector_key or "default"
+    return f"map:{safe_key}"
 
-    # Записываем оба ключа с временем жизни 7200 секунд (2 часа)
+
+async def save_mapping(connector_key: str | None, tg_msg_id: int, max_msg_id: str) -> None:
+    """Сохранить связку: TG-сообщение ↔ MAX-сообщение в рамках одного коннектора."""
+    prefix = _map_prefix(connector_key)
+    tg_key = f"{prefix}:TG:{tg_msg_id}"
+    max_key = f"{prefix}:MAX:{max_msg_id}"
+
     await pool.set(tg_key, max_msg_id, ex=MSG_TTL)
     await pool.set(max_key, str(tg_msg_id), ex=MSG_TTL)
 
 
-async def get_max_id(tg_msg_id: int) -> str | None:
-    """По ID сообщения из TG найти парное ID в MAX."""
-    return await pool.get(f"TG:{tg_msg_id}")
+async def get_max_id(connector_key: str | None, tg_msg_id: int) -> str | None:
+    """По ID сообщения из TG найти парное ID в MAX в рамках одного коннектора."""
+    prefix = _map_prefix(connector_key)
+    return await pool.get(f"{prefix}:TG:{tg_msg_id}")
 
 
-async def get_tg_id(max_msg_id: str) -> int | None:
-    """По ID сообщения из MAX найти парное ID в TG."""
-    result = await pool.get(f"MAX:{max_msg_id}")
+async def get_tg_id(connector_key: str | None, max_msg_id: str) -> int | None:
+    """По ID сообщения из MAX найти парное ID в TG в рамках одного коннектора."""
+    prefix = _map_prefix(connector_key)
+    result = await pool.get(f"{prefix}:MAX:{max_msg_id}")
     return int(result) if result else None
 
 
-async def delete_mapping(tg_msg_id: int = None, max_msg_id: str = None) -> None:
-    """Удалить связку (при удалении сообщения)."""
-    if tg_msg_id:
-        # Сначала находим парный ключ, потом удаляем оба
-        max_id = await pool.get(f"TG:{tg_msg_id}")
-        await pool.delete(f"TG:{tg_msg_id}")
-        if max_id:
-            await pool.delete(f"MAX:{max_id}")
-    if max_msg_id:
-        tg_id = await pool.get(f"MAX:{max_msg_id}")
-        await pool.delete(f"MAX:{max_msg_id}")
-        if tg_id:
-            await pool.delete(f"TG:{tg_id}")
-
-
-async def is_processed(update_id: int | str) -> bool:
-    """Проверяем: мы уже обработали это событие?
-    Защита от дублей — если Telegram/MAX пришлёт одно и то же дважды.
-    """
-    key = f"processed:{update_id}"
-    # set с nx=True записывает ТОЛЬКО если ключа ещё нет
-    # Если записал — значит первый раз видим (возвращает True → «новое»)
-    # Если не записал — значит уже было (возвращает None → «дубль»)
+async def is_processed(update_id: int | str, connector_key: str | None = None) -> bool:
+    """Проверяем: мы уже обработали это событие? Защита от дублей."""
+    key = f"processed:{connector_key}:{update_id}" if connector_key else f"processed:{update_id}"
     result = await pool.set(key, "1", ex=60, nx=True)
     return result is None  # True = уже обработано, False = новое
 

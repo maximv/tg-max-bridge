@@ -29,6 +29,7 @@ async def enqueue_message(
     media_url: str | None = None,
     media_type: str | None = None,
     media_name: str | None = None,
+    connector_key: str | None = None,
 ) -> None:
     """Положить задачу в очередь."""
     task = json.dumps({
@@ -42,6 +43,7 @@ async def enqueue_message(
         "media_url": media_url,
         "media_type": media_type,
         "media_name": media_name,
+        "connector_key": connector_key,
     })
     await pool.rpush(QUEUE_KEY, task)
 
@@ -107,8 +109,9 @@ async def _do_send(bot: Bot, task: dict) -> None:
     sent = await bot.send_message(**kwargs)
 
     max_msg_id = task.get("max_msg_id")
+    connector_key = task.get("connector_key")
     if max_msg_id:
-        await save_mapping(sent.message_id, max_msg_id)
+        await save_mapping(connector_key, sent.message_id, max_msg_id)
 
     print(f"[TG SENDER] Отправлено msg_id={sent.message_id}")
 
@@ -175,8 +178,9 @@ async def _do_media(bot: Bot, task: dict) -> None:
     del file_data
 
     max_msg_id = task.get("max_msg_id")
+    connector_key = task.get("connector_key")
     if max_msg_id:
-        await save_mapping(sent.message_id, max_msg_id)
+        await save_mapping(connector_key, sent.message_id, max_msg_id)
 
     print(f"[TG SENDER] Медиа отправлено msg_id={sent.message_id}")
 
@@ -253,7 +257,8 @@ async def _do_media_group(bot: Bot, task: dict) -> None:
         del data
 
     max_msg_id = task.get("max_msg_id")
+    connector_key = task.get("connector_key")
     if max_msg_id:
-        await save_mapping(tg_id, max_msg_id)
+        await save_mapping(connector_key, tg_id, max_msg_id)
 
     print(f"[TG SENDER] Альбом ({len(media_group)} фото) отправлен msg_id={tg_id}")

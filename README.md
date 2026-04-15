@@ -33,6 +33,7 @@
 ```
 bridge/
 ├── .env.example          ← шаблон настроек (заполните свой .env)
+├── connectors.json       ← связи TG group+topic ↔ MAX group
 ├── docker-compose.yml    ← запуск бота + Redis
 ├── Dockerfile            ← сборка контейнера
 ├── requirements.txt      ← Python-зависимости
@@ -66,9 +67,38 @@ cp .env.example .env
 nano .env   # заполните токены и ID чатов
 ```
 
-Где взять токены и ID — описано в комментариях внутри `.env.example`.
+Заполните токены ботов. Маршрутизация чатов теперь хранится не в `.env`, а в `connectors.json`.
 
-### 3. Запустите через Docker Compose
+### 3. Создайте файл connectors.json
+
+```bash
+cp connectors.json.example connectors.json
+nano connectors.json
+```
+
+Пример одного коннектора:
+
+```json
+{
+  "connectors": [
+    {
+      "name": "support-main",
+      "enabled": true,
+      "tg_group_id": -1001111111111,
+      "tg_topic_id": 0,
+      "max_group_id": -73533154791452,
+      "comment": "Основной поток"
+    }
+  ]
+}
+```
+
+Правила:
+- `tg_topic_id = 0` означает сообщения из всей TG-группы (без фильтра по топику).
+- Один `max_group_id` может принадлежать только одному коннектору.
+- Пара `tg_group_id + tg_topic_id` должна быть уникальной.
+
+### 4. Запустите через Docker Compose
 
 ```bash
 docker compose up -d --build
@@ -81,7 +111,7 @@ docker compose ps          # статус контейнеров
 docker compose logs bot    # логи бота
 ```
 
-### 4. Тест
+### 5. Тест
 
 Напишите сообщение в TG-группу → оно должно появиться в MAX, и наоборот.
 

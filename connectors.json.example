@@ -1,0 +1,20 @@
+{
+  "connectors": [
+    {
+      "name": "support-main",
+      "enabled": true,
+      "tg_group_id": -1001111111111,
+      "tg_topic_id": 0,
+      "max_group_id": -73533154791452,
+      "comment": "Основной поток support"
+    },
+    {
+      "name": "sales-topic",
+      "enabled": false,
+      "tg_group_id": -1001111111111,
+      "tg_topic_id": 12345,
+      "max_group_id": -73533150000000,
+      "comment": "Пример второго коннектора в другом топике"
+    }
+  ]
+}

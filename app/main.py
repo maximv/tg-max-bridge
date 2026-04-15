@@ -8,6 +8,7 @@
 import asyncio
 from aiogram import Bot, Dispatcher
 from config import TG_BOT_TOKEN
+from connectors import CONNECTORS
 from tg_handler import router as tg_router
 from commands import router as cmd_router
 from tg_sender import sender_worker
@@ -31,6 +32,7 @@ async def main():
     print("🚀 Мост TG ↔ MAX запущен")
     print("📡 TG polling: слушаю Telegram")
     print("📡 MAX polling: слушаю MAX")
+    print(f"🔌 Коннекторов: {len(CONNECTORS)}")
     print("📤 TG sender: воркер с rate limit (3.5 сек)")
     print("🔄 Режим: восстановление пропущенных сообщений включено")
     print("🛑 Для остановки нажмите Ctrl+C")

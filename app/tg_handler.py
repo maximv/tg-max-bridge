@@ -7,7 +7,8 @@
 
 import asyncio
 from aiogram import Router, types, F, Bot
-from config import TG_GROUP_ID, MAX_GROUP_ID, ADMIN_IDS
+from config import ADMIN_IDS
+from connectors import TG_GROUP_IDS, get_connector_for_tg, Connector
 from formatter import format_tg_to_max, format_quote, get_display_name_tg
 from max_sender import send_text as max_send_text, edit_text as max_edit_text, send_album
 from media import (
@@ -30,6 +31,10 @@ _album_buffer: dict[str, list] = {}
 _album_timers: dict[str, asyncio.Task] = {}
 
 ALBUM_WAIT_SECONDS = 2.0  # ждём 2 секунды чтобы собрать все фото альбома
+
+
+def resolve_connector_for_tg_message(message: types.Message) -> Connector | None:
+    return get_connector_for_tg(message.chat.id, message.message_thread_id)
 
 
 # ─────────────────────────────────────────────
@@ -85,9 +90,11 @@ async def notify_admin_large_file(sender_name: str, file_name: str,
 #  Обработчики топиков
 # ─────────────────────────────────────────────
 
-@router.message(F.chat.id == TG_GROUP_ID, F.forum_topic_created)
+@router.message(F.forum_topic_created)
 async def handle_topic_created(message: types.Message) -> None:
     """Кто-то создал новый топик — запоминаем его название."""
+    if message.chat.id not in TG_GROUP_IDS:
+        return
     name = message.forum_topic_created.name
     thread_id = message.message_thread_id
     if thread_id and name:
@@ -95,9 +102,11 @@ async def handle_topic_created(message: types.Message) -> None:
         print(f"[TOPIC] Создан топик: #{thread_id} = «{name}»")
 
 
-@router.message(F.chat.id == TG_GROUP_ID, F.forum_topic_edited)
+@router.message(F.forum_topic_edited)
 async def handle_topic_edited(message: types.Message) -> None:
     """Кто-то переименовал топик — обновляем кэш."""
+    if message.chat.id not in TG_GROUP_IDS:
+        return
     thread_id = message.message_thread_id
     if thread_id and message.forum_topic_edited.name:
         name = message.forum_topic_edited.name
@@ -154,6 +163,10 @@ async def _flush_album(gid: str, bot: Bot) -> None:
     if not first.from_user:
         return
 
+    connector = resolve_connector_for_tg_message(first)
+    if not connector:
+        return
+
     # Определяем топик
     topic_name = await resolve_topic_name(first)
     if first.message_thread_id and not topic_name:
@@ -174,7 +187,7 @@ async def _flush_album(gid: str, bot: Bot) -> None:
     if reply_msg and reply_msg.message_id:
         is_topic_root = reply_msg.forum_topic_created is not None
         if not is_topic_root:
-            reply_to_max_mid = await get_max_id(reply_msg.message_id)
+            reply_to_max_mid = await get_max_id(connector.key, reply_msg.message_id)
             if not reply_to_max_mid:
                 original_text = reply_msg.text or ""
                 quote = format_quote(original_text)
@@ -221,7 +234,7 @@ async def _flush_album(gid: str, bot: Bot) -> None:
     # Отправляем: если токены есть и всё загрузилось — альбомом, иначе — текстом
     if tokens and not upload_failed:
         max_msg_id = await send_album(
-            chat_id=MAX_GROUP_ID,
+            chat_id=connector.max_group_id,
             tokens=tokens,
             caption=formatted,
             reply_to=reply_to_max_mid,
@@ -230,13 +243,13 @@ async def _flush_album(gid: str, bot: Bot) -> None:
     else:
         # Фолбэк: хотя бы текст с атрибуцией дойдёт
         max_msg_id = await max_send_text(
-            chat_id=MAX_GROUP_ID, text=formatted, reply_to=reply_to_max_mid,
+            chat_id=connector.max_group_id, text=formatted, reply_to=reply_to_max_mid,
         )
         log_action = f"Альбом→текст (ошибка загрузки)"
 
     if max_msg_id:
         # Привязываем первый TG message_id к MAX mid
-        await save_mapping(first.message_id, max_msg_id)
+        await save_mapping(connector.key, first.message_id, max_msg_id)
         topic_label = f" [{topic_name}]" if topic_name else ""
         print(f"[TG→MAX] {log_action}{topic_label} {first.from_user.first_name}: {caption_text[:50]}")
     else:
@@ -247,14 +260,20 @@ async def _flush_album(gid: str, bot: Bot) -> None:
 #  Основной обработчик сообщений
 # ─────────────────────────────────────────────
 
-@router.message(F.chat.id == TG_GROUP_ID)
+@router.message()
 async def handle_tg_message(message: types.Message, bot: Bot) -> None:
     """Обработать новое сообщение из TG-группы."""
+    if message.chat.id not in TG_GROUP_IDS:
+        return
 
     if message.from_user and message.from_user.is_bot:
         return
 
-    if await is_processed(f"tg:{message.message_id}"):
+    connector = resolve_connector_for_tg_message(message)
+    if not connector:
+        return
+
+    if await is_processed(f"tg:{message.message_id}", connector.key):
         return
 
     # Альбом: несколько фото одним постом — складываем в буфер
@@ -287,7 +306,7 @@ async def handle_tg_message(message: types.Message, bot: Bot) -> None:
     if reply_msg and reply_msg.message_id:
         is_topic_root = reply_msg.forum_topic_created is not None
         if not is_topic_root:
-            reply_to_max_mid = await get_max_id(reply_msg.message_id)
+            reply_to_max_mid = await get_max_id(connector.key, reply_msg.message_id)
             if not reply_to_max_mid:
                 original_text = reply_msg.text or ""
                 quote = format_quote(original_text)
@@ -306,7 +325,7 @@ async def handle_tg_message(message: types.Message, bot: Bot) -> None:
             size_str = format_size(file_size)
             formatted += f"\n📎 {file_name} ({size_str})"
             max_msg_id = await max_send_text(
-                chat_id=MAX_GROUP_ID, text=formatted, reply_to=reply_to_max_mid,
+                chat_id=connector.max_group_id, text=formatted, reply_to=reply_to_max_mid,
             )
             sender_name = get_display_name_tg(message.from_user)
             await notify_admin_large_file(sender_name, file_name, file_size, "TG")
@@ -317,7 +336,7 @@ async def handle_tg_message(message: types.Message, bot: Bot) -> None:
                 )
                 upload_type = "image" if media_info["type"] == "photo" else "file"
                 max_msg_id = await send_media_to_max(
-                    chat_id=MAX_GROUP_ID,
+                    chat_id=connector.max_group_id,
                     file_data=file_data,
                     file_name=dl_name,
                     caption=formatted,
@@ -327,15 +346,15 @@ async def handle_tg_message(message: types.Message, bot: Bot) -> None:
             except Exception as e:
                 print(f"[TG→MAX] Ошибка медиа: {e}")
                 max_msg_id = await max_send_text(
-                    chat_id=MAX_GROUP_ID, text=formatted, reply_to=reply_to_max_mid,
+                    chat_id=connector.max_group_id, text=formatted, reply_to=reply_to_max_mid,
                 )
     else:
         max_msg_id = await max_send_text(
-            chat_id=MAX_GROUP_ID, text=formatted, reply_to=reply_to_max_mid,
+            chat_id=connector.max_group_id, text=formatted, reply_to=reply_to_max_mid,
         )
 
     if max_msg_id:
-        await save_mapping(message.message_id, max_msg_id)
+        await save_mapping(connector.key, message.message_id, max_msg_id)
         topic_label = f" [{topic_name}]" if topic_name else ""
         log_text = (text or "[медиа]")[:50]
         print(f"[TG→MAX]{topic_label} {message.from_user.first_name}: {log_text}")
@@ -347,18 +366,24 @@ async def handle_tg_message(message: types.Message, bot: Bot) -> None:
 #  Обработчик редактирования
 # ─────────────────────────────────────────────
 
-@router.edited_message(F.chat.id == TG_GROUP_ID)
+@router.edited_message()
 async def handle_tg_edit(message: types.Message) -> None:
     """Сообщение отредактировали в TG → редактируем зеркало в MAX."""
+    if message.chat.id not in TG_GROUP_IDS:
+        return
 
     if message.from_user and message.from_user.is_bot:
+        return
+
+    connector = resolve_connector_for_tg_message(message)
+    if not connector:
         return
 
     text = message.text or message.caption or ""
     if not text:
         return
 
-    max_mid = await get_max_id(message.message_id)
+    max_mid = await get_max_id(connector.key, message.message_id)
     if not max_mid:
         print(f"[TG→MAX] Edit: пара не найдена для msg_id={message.message_id}, игнор")
         return

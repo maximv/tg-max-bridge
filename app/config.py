@@ -6,16 +6,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Ищем .env в папке bridge/ (на уровень выше от app/)
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 # --- Telegram ---
 TG_BOT_TOKEN = os.environ["TG_BOT_TOKEN"]
-TG_GROUP_ID = int(os.environ["TG_GROUP_ID"])
-TG_TOPIC_ID = int(os.environ.get("TG_TOPIC_ID", "0")) or None  # топик для сообщений из MAX
 
 # --- MAX ---
 MAX_BOT_TOKEN = os.environ["MAX_BOT_TOKEN"]         # токен бота MAX
-MAX_GROUP_ID = int(os.environ["MAX_GROUP_ID"])       # ID группы MAX (число)
 MAX_API_URL = "https://platform-api.max.ru"          # базовый адрес API MAX
 
 # --- Redis ---
@@ -32,6 +30,10 @@ ADMIN_IDS = [
 # ↑ Берём строку из .env, разрезаем по запятой (на случай
 #   если админов несколько), убираем пробелы, превращаем в числа.
 #   Получается список ID администраторов
+
+# --- Коннекторы ---
+# Путь к JSON с массивом соответствий TG <-> MAX.
+CONNECTORS_FILE = os.environ.get("CONNECTORS_FILE", str(BASE_DIR / "connectors.json"))
 
 # --- Rate Limiting ---
 TG_SEND_INTERVAL = 3.5  # секунды между сообщениями в TG (защита от бана)

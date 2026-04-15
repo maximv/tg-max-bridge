@@ -4,11 +4,12 @@
 
 import asyncio
 import httpx
-from config import MAX_BOT_TOKEN, MAX_API_URL, MAX_GROUP_ID, TG_GROUP_ID, TG_TOPIC_ID, ADMIN_IDS
+from config import MAX_BOT_TOKEN, MAX_API_URL, ADMIN_IDS
+from connectors import get_connector_for_max
 from formatter import format_max_to_tg, format_quote, get_display_name_max
 from tg_sender import enqueue_message
 from media import get_max_media_info, format_size, MAX_FILE_LIMIT
-from mapping import save_mapping, get_tg_id, is_processed, save_max_marker, get_max_marker
+from mapping import get_tg_id, is_processed, save_max_marker, get_max_marker
 
 _marker: int | None = None
 
@@ -143,14 +144,15 @@ async def handle_message_created(update: dict) -> None:
     recipient = message.get("recipient", {})
 
     chat_id = recipient.get("chat_id")
-    if chat_id != MAX_GROUP_ID:
+    connector = get_connector_for_max(chat_id)
+    if not connector:
         return
 
     if sender.get("is_bot"):
         return
 
     mid = body.get("mid", "")
-    if await is_processed(f"max:{mid}"):
+    if await is_processed(f"max:{mid}", connector.key):
         return
 
     text = body.get("text") or ""
@@ -172,7 +174,7 @@ async def handle_message_created(update: dict) -> None:
     if link and link.get("type") == "reply":
         original_mid = link.get("message", {}).get("mid")
         if original_mid:
-            reply_to_tg_id = await get_tg_id(original_mid)
+            reply_to_tg_id = await get_tg_id(connector.key, original_mid)
 
             if not reply_to_tg_id:
                 original_text = link.get("message", {}).get("body", {}).get("text", "")
@@ -186,13 +188,14 @@ async def handle_message_created(update: dict) -> None:
         # Собираем все URL через запятую — передаём в очередь
         urls = ",".join(img["url"] for img in all_images)
         await enqueue_message(
-            chat_id=TG_GROUP_ID,
+            chat_id=connector.tg_group_id,
             text=formatted,
             reply_to=reply_to_tg_id,
-            message_thread_id=TG_TOPIC_ID,
+            message_thread_id=connector.tg_topic_id,
             max_msg_id=mid,
             action="media_group",
             media_url=urls,
+            connector_key=connector.key,
         )
         name = sender.get("name", "?")
         print(f"[MAX→TG] Альбом ({len(all_images)} фото) {name}: {text[:50]}")
@@ -209,32 +212,36 @@ async def handle_message_created(update: dict) -> None:
             file_name = media_info.get("file_name", "файл")
             formatted += f"\n📎 {file_name} ({size_str})"
             await enqueue_message(
-                chat_id=TG_GROUP_ID, text=formatted,
-                reply_to=reply_to_tg_id, message_thread_id=TG_TOPIC_ID,
+                chat_id=connector.tg_group_id, text=formatted,
+                reply_to=reply_to_tg_id, message_thread_id=connector.tg_topic_id,
                 max_msg_id=mid,
+                connector_key=connector.key,
             )
             sender_name = get_display_name_max(sender)
             await notify_admin_large_file(sender_name, file_name, file_size, "MAX")
         elif file_url:
             media_type = "photo" if media_info["type"] == "image" else "document"
             await enqueue_message(
-                chat_id=TG_GROUP_ID, text=formatted,
-                reply_to=reply_to_tg_id, message_thread_id=TG_TOPIC_ID,
+                chat_id=connector.tg_group_id, text=formatted,
+                reply_to=reply_to_tg_id, message_thread_id=connector.tg_topic_id,
                 max_msg_id=mid, action="media",
                 media_url=file_url, media_type=media_type,
                 media_name=media_info.get("file_name"),
+                connector_key=connector.key,
             )
         else:
             await enqueue_message(
-                chat_id=TG_GROUP_ID, text=formatted,
-                reply_to=reply_to_tg_id, message_thread_id=TG_TOPIC_ID,
+                chat_id=connector.tg_group_id, text=formatted,
+                reply_to=reply_to_tg_id, message_thread_id=connector.tg_topic_id,
                 max_msg_id=mid,
+                connector_key=connector.key,
             )
     else:
         await enqueue_message(
-            chat_id=TG_GROUP_ID, text=formatted,
-            reply_to=reply_to_tg_id, message_thread_id=TG_TOPIC_ID,
+            chat_id=connector.tg_group_id, text=formatted,
+            reply_to=reply_to_tg_id, message_thread_id=connector.tg_topic_id,
             max_msg_id=mid,
+            connector_key=connector.key,
         )
 
     name = sender.get("name", "?")
@@ -250,7 +257,8 @@ async def handle_message_edited(update: dict) -> None:
     recipient = message.get("recipient", {})
 
     chat_id = recipient.get("chat_id")
-    if chat_id != MAX_GROUP_ID:
+    connector = get_connector_for_max(chat_id)
+    if not connector:
         return
 
     if sender.get("is_bot"):
@@ -261,7 +269,7 @@ async def handle_message_edited(update: dict) -> None:
     if not text:
         return
 
-    tg_msg_id = await get_tg_id(mid)
+    tg_msg_id = await get_tg_id(connector.key, mid)
     if not tg_msg_id:
         print(f"[MAX→TG] Edit: пара не найдена для mid={mid}, игнор")
         return
@@ -269,10 +277,11 @@ async def handle_message_edited(update: dict) -> None:
     formatted = format_max_to_tg(sender, text)
 
     await enqueue_message(
-        chat_id=TG_GROUP_ID,
+        chat_id=connector.tg_group_id,
         text=formatted,
         action="edit",
         tg_msg_id=tg_msg_id,
+        connector_key=connector.key,
     )
 
     name = sender.get("name", "?")
