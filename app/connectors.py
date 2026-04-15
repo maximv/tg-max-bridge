@@ -119,6 +119,41 @@ def _write_raw_config(raw: dict) -> None:
     config_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _find_index_by_secret(items: list[dict], secret_norm: str) -> int | None:
+    for i, item in enumerate(items):
+        if _normalize_name(str(item.get("name", ""))) == secret_norm:
+            return i
+    return None
+
+
+def _find_index_by_tg(items: list[dict], tg_group_id: int, tg_topic_id: int | None) -> int | None:
+    target_topic = int(tg_topic_id or 0)
+    for i, item in enumerate(items):
+        if item.get("tg_group_id") is None:
+            continue
+        try:
+            existing_group = int(item.get("tg_group_id"))
+            existing_topic = int(item.get("tg_topic_id", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if existing_group == tg_group_id and existing_topic == target_topic:
+            return i
+    return None
+
+
+def _find_index_by_max(items: list[dict], max_group_id: int) -> int | None:
+    for i, item in enumerate(items):
+        if item.get("max_group_id") is None:
+            continue
+        try:
+            existing_max = int(item.get("max_group_id"))
+        except (TypeError, ValueError):
+            continue
+        if existing_max == max_group_id:
+            return i
+    return None
+
+
 def _build_connector_indexes(connectors: list[Connector]) -> tuple[dict[tuple[int, int], Connector], dict[int, Connector]]:
     by_tg: dict[tuple[int, int], Connector] = {}
     by_max: dict[int, Connector] = {}
@@ -252,13 +287,16 @@ def pair_from_tg(secret: str, tg_group_id: int, tg_topic_id: int | None) -> Pair
         raw = _load_raw_config()
         items = raw["connectors"]
 
-        found_idx = None
-        for i, item in enumerate(items):
-            if _normalize_name(str(item.get("name", ""))) == secret_norm:
-                found_idx = i
-                break
+        found_idx = _find_index_by_secret(items, secret_norm)
+        existing_tg_idx = _find_index_by_tg(items, tg_group_id, tg_topic_id)
 
         if found_idx is None:
+            if existing_tg_idx is not None:
+                existing_name = str(items[existing_tg_idx].get("name", "")).strip() or "<без имени>"
+                raise RuntimeError(
+                    f"Эта TG-группа/топик уже участвует в связке с секретом '{existing_name}'. "
+                    "Используйте его или сначала выполните /disconnect."
+                )
             items.append(
                 {
                     "name": secret.strip(),
@@ -283,6 +321,12 @@ def pair_from_tg(secret: str, tg_group_id: int, tg_topic_id: int | None) -> Pair
         item = items[found_idx]
         existing_tg = item.get("tg_group_id")
         if existing_tg is None:
+            if existing_tg_idx is not None and existing_tg_idx != found_idx:
+                existing_name = str(items[existing_tg_idx].get("name", "")).strip() or "<без имени>"
+                raise RuntimeError(
+                    f"Эта TG-группа/топик уже участвует в связке с секретом '{existing_name}'. "
+                    "Сначала выполните /disconnect."
+                )
             item["tg_group_id"] = tg_group_id
             item["tg_topic_id"] = tg_topic_id or 0
         elif int(existing_tg) != tg_group_id or int(item.get("tg_topic_id", 0) or 0) != int(tg_topic_id or 0):
@@ -315,13 +359,16 @@ def pair_from_max(secret: str, max_group_id: int) -> PairingResult:
         raw = _load_raw_config()
         items = raw["connectors"]
 
-        found_idx = None
-        for i, item in enumerate(items):
-            if _normalize_name(str(item.get("name", ""))) == secret_norm:
-                found_idx = i
-                break
+        found_idx = _find_index_by_secret(items, secret_norm)
+        existing_max_idx = _find_index_by_max(items, max_group_id)
 
         if found_idx is None:
+            if existing_max_idx is not None:
+                existing_name = str(items[existing_max_idx].get("name", "")).strip() or "<без имени>"
+                raise RuntimeError(
+                    f"Эта MAX-группа уже участвует в связке с секретом '{existing_name}'. "
+                    "Используйте его или сначала выполните /disconnect."
+                )
             items.append(
                 {
                     "name": secret.strip(),
@@ -346,6 +393,12 @@ def pair_from_max(secret: str, max_group_id: int) -> PairingResult:
         item = items[found_idx]
         existing_max = item.get("max_group_id")
         if existing_max is None:
+            if existing_max_idx is not None and existing_max_idx != found_idx:
+                existing_name = str(items[existing_max_idx].get("name", "")).strip() or "<без имени>"
+                raise RuntimeError(
+                    f"Эта MAX-группа уже участвует в связке с секретом '{existing_name}'. "
+                    "Сначала выполните /disconnect."
+                )
             item["max_group_id"] = max_group_id
         elif int(existing_max) != max_group_id:
             raise RuntimeError("Этот секрет уже привязан к другой MAX-группе")
