@@ -46,25 +46,70 @@ def _sender_user_id(sender: dict) -> int | None:
     return None
 
 
+def _extract_user_id(candidate: object) -> int | None:
+    if isinstance(candidate, int):
+        return candidate
+    if isinstance(candidate, str):
+        try:
+            return int(candidate)
+        except ValueError:
+            return None
+    if isinstance(candidate, dict):
+        for key in ("user_id", "id"):
+            value = candidate.get(key)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return None
+    return None
+
+
 async def is_max_group_admin(chat_id: int, sender: dict) -> bool:
     user_id = _sender_user_id(sender)
     if user_id is None:
         return False
 
+    # Быстрые локальные признаки админа/владельца в update payload.
+    if sender.get("is_admin") is True or sender.get("is_owner") is True:
+        return True
+    role = str(sender.get("role", "")).lower()
+    if role in {"admin", "administrator", "owner"}:
+        return True
+
     http = await get_max_client()
     try:
-        resp = await http.get(
+        # 1) owner_id в информации о чате
+        chat_resp = await http.get(
+            f"{MAX_API_URL}/chats/{chat_id}",
+            headers={"Authorization": MAX_BOT_TOKEN},
+        )
+        if chat_resp.status_code == 200:
+            chat_data = chat_resp.json()
+            owner_id = _extract_user_id(chat_data.get("owner_id"))
+            if owner_id == user_id:
+                return True
+
+        # 2) список админов (формат может отличаться)
+        admins_resp = await http.get(
             f"{MAX_API_URL}/chats/{chat_id}/admins",
             headers={"Authorization": MAX_BOT_TOKEN},
         )
-        if resp.status_code != 200:
-            return False
-        data = resp.json()
-        admins = data.get("admins", data.get("participants", []))
-        for admin in admins:
-            for key in ("user_id", "id"):
-                if admin.get(key) is not None and int(admin.get(key)) == user_id:
-                    return True
+        if admins_resp.status_code == 200:
+            data = admins_resp.json()
+            pools = []
+            for key in ("admins", "participants", "users", "items", "members"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    pools.append(value)
+            if not pools and isinstance(data, list):
+                pools.append(data)
+
+            for group in pools:
+                for admin in group:
+                    admin_id = _extract_user_id(admin)
+                    if admin_id == user_id:
+                        return True
     except Exception:
         return False
     return False
