@@ -1,5 +1,6 @@
 aiogram==3.15.0
 httpx==0.28.1
-aiohttp==3.11.11
 redis==5.2.1
 python-dotenv==1.0.1
+# aiohttp используется для приёма MAX webhook (aiohttp.web).
+# Не закрепляем явно: aiogram 3.15 уже тянет aiohttp>=3.9,<3.11 как зависимость.
