@@ -1,10 +1,21 @@
 # max_handler.py — обработка событий из MAX
-# Опрашиваем MAX API через GET /updates (long polling),
-# форматируем сообщения и кладём в очередь на отправку в TG
+# Режимы: GET /updates (long polling) или HTTPS webhook (POST /subscriptions) — рекомендуется API.
 
 import asyncio
 import httpx
-from config import MAX_BOT_TOKEN, MAX_API_URL, ADMIN_IDS
+from urllib.parse import urlparse
+
+from aiohttp import web
+from config import (
+    MAX_BOT_TOKEN,
+    MAX_API_URL,
+    ADMIN_IDS,
+    WEBHOOK_SECRET,
+    max_api_webhook_secret_ok,
+    MAX_WEBHOOK_PUBLIC_URL,
+    MAX_WEBHOOK_LISTEN_HOST,
+    MAX_WEBHOOK_LISTEN_PORT,
+)
 from connectors import get_connector_for_max, pair_from_max, disconnect_from_max
 from formatter import format_max_to_tg, format_quote, get_display_name_max
 from tg_sender import enqueue_message
@@ -132,6 +143,125 @@ def get_all_images(attachments: list) -> list[dict]:
     return images
 
 
+def _max_webhook_path_from_public_url(public_url: str) -> str:
+    """Путь для aiohttp (без хоста)."""
+    p = urlparse(public_url).path
+    if not p:
+        return "/"
+    return p.rstrip("/") or "/"
+
+
+async def delete_all_max_subscriptions(http: httpx.AsyncClient) -> None:
+    """Удалить все подписки webhook у бота (для переключения режима или перед регистрацией)."""
+    try:
+        subs = await http.get(
+            f"{MAX_API_URL}/subscriptions",
+            headers={"Authorization": MAX_BOT_TOKEN},
+        )
+        if subs.status_code != 200:
+            return
+        for sub in subs.json().get("subscriptions", []):
+            sub_url = sub.get("url", "")
+            if not sub_url:
+                continue
+            await http.delete(
+                f"{MAX_API_URL}/subscriptions",
+                params={"url": sub_url},
+                headers={"Authorization": MAX_BOT_TOKEN},
+            )
+            print(f"[MAX] Удалил подписку webhook: {sub_url}")
+    except Exception as e:
+        print(f"[MAX] Не удалось очистить подписки: {e}")
+
+
+async def register_max_webhook_subscription() -> None:
+    if not max_api_webhook_secret_ok(WEBHOOK_SECRET):
+        raise ValueError(
+            "WEBHOOK_SECRET должен быть 5–256 символов [a-zA-Z0-9_-] (требование MAX API) "
+            "или оставьте пустым."
+        )
+    path = _max_webhook_path_from_public_url(MAX_WEBHOOK_PUBLIC_URL)
+    body: dict = {
+        "url": MAX_WEBHOOK_PUBLIC_URL,
+        "update_types": ["message_created", "message_edited"],
+    }
+    if WEBHOOK_SECRET:
+        body["secret"] = WEBHOOK_SECRET
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        await delete_all_max_subscriptions(http)
+        resp = await http.post(
+            f"{MAX_API_URL}/subscriptions",
+            headers={
+                "Authorization": MAX_BOT_TOKEN,
+                "Content-Type": "application/json",
+            },
+            json=body,
+        )
+        if not resp.is_success:
+            print(f"[MAX WEBHOOK] Ошибка POST /subscriptions: {resp.status_code} {resp.text}")
+            resp.raise_for_status()
+    print(f"[MAX WEBHOOK] Подписка зарегистрирована: {MAX_WEBHOOK_PUBLIC_URL} (path={path})")
+
+
+async def shutdown_max_subscriptions() -> None:
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        await delete_all_max_subscriptions(http)
+
+
+async def max_webhook_http_handler(request: web.Request) -> web.Response:
+    if WEBHOOK_SECRET:
+        if request.headers.get("X-Max-Bot-Api-Secret") != WEBHOOK_SECRET:
+            return web.Response(status=403, text="forbidden")
+    try:
+        data = await request.json()
+    except Exception:
+        return web.Response(status=400, text="bad json")
+    if not isinstance(data, dict):
+        return web.Response(status=400, text="expected object")
+
+    marker = data.get("marker")
+    if marker is not None:
+        try:
+            await save_max_marker(int(marker))
+        except (TypeError, ValueError):
+            pass
+
+    try:
+        await handle_update(data)
+    except Exception as e:
+        print(f"[MAX WEBHOOK] Ошибка обработки: {e}")
+        return web.Response(status=500, text="handler error")
+    return web.Response(status=200)
+
+
+async def run_max_webhook_server() -> None:
+    path = _max_webhook_path_from_public_url(MAX_WEBHOOK_PUBLIC_URL)
+    app = web.Application()
+    app.router.add_post(path, max_webhook_http_handler)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(
+        runner,
+        MAX_WEBHOOK_LISTEN_HOST,
+        MAX_WEBHOOK_LISTEN_PORT,
+    )
+    await site.start()
+    print(
+        f"[MAX WEBHOOK] HTTP слушает http://{MAX_WEBHOOK_LISTEN_HOST}:"
+        f"{MAX_WEBHOOK_LISTEN_PORT}{path}"
+    )
+    await register_max_webhook_subscription()
+    block = asyncio.Event()
+    try:
+        await block.wait()
+    except asyncio.CancelledError:
+        print("[MAX WEBHOOK] Остановка сервера...")
+        raise
+    finally:
+        await runner.cleanup()
+
+
 async def notify_admin_large_file(sender_name: str, file_name: str,
                                   file_size: int, source: str) -> None:
     """Уведомить админа в личку о большом файле."""
@@ -172,22 +302,7 @@ async def poll_max() -> None:
 
     async with httpx.AsyncClient(timeout=60.0) as http:
 
-        try:
-            subs = await http.get(
-                f"{MAX_API_URL}/subscriptions",
-                headers={"Authorization": MAX_BOT_TOKEN},
-            )
-            if subs.status_code == 200:
-                for sub in subs.json().get("subscriptions", []):
-                    sub_url = sub.get("url", "")
-                    await http.delete(
-                        f"{MAX_API_URL}/subscriptions",
-                        params={"url": sub_url},
-                        headers={"Authorization": MAX_BOT_TOKEN},
-                    )
-                    print(f"[MAX POLL] Удалил webhook: {sub_url}")
-        except Exception as e:
-            print(f"[MAX POLL] Не удалось проверить подписки: {e}")
+        await delete_all_max_subscriptions(http)
 
         while True:
             try:

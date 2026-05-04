@@ -129,6 +129,14 @@ docker compose logs bot    # логи бота
 
 Подробная инструкция для новичков — в файле [DEPLOY_GUIDE.md](DEPLOY_GUIDE.md).
 
+### События MAX: webhook вместо long polling
+
+С **11.05.2026** у [GET /updates (long polling)](https://dev.max.ru/docs-api/methods/GET/updates) появляются жёсткие лимиты (в т.ч. **2 RPS**, таймаут **30 с**, до **100** событий в ответе, **TTL** событий **24 ч**). Для продакшена MAX рекомендует [POST /subscriptions (webhook)](https://dev.max.ru/docs-api/methods/POST/subscriptions).
+
+В боте включите в `.env`: `MAX_USE_WEBHOOK=1`, полный HTTPS URL `MAX_WEBHOOK_PUBLIC_URL` (как в подписке; снаружи обычно порт **443**, до контейнера — прокси на `MAX_WEBHOOK_LISTEN_PORT`), по желанию `WEBHOOK_SECRET` (формат в `.env.example`). До включения webhook у вас по умолчанию используется long polling, как раньше.
+
+Готовый Apache vhost + пошаговая инструкция по SSL (Let's Encrypt) лежат в [`deploy/apache/`](deploy/apache/README.md) — конфиг написан так, чтобы не мешать другим сайтам на 80 порту (например, Nextcloud).
+
 ### Важно: выбор сервера
 
 - **Telegram API** заблокирован в России — сервер с российским IP не подойдёт

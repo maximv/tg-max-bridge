@@ -2,6 +2,7 @@
 # Все остальные файлы будут импортировать переменные отсюда
 
 import os
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -21,7 +22,32 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")  # адрес 
 MSG_TTL = 7200                                       # 2 часа в секундах — время жизни связки сообщений
 
 # --- Безопасность ---
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")  # секрет для webhook (пригодится позже)
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")  # заголовок X-Max-Bot-Api-Secret (рекомендуется API MAX)
+
+# --- MAX: long polling vs webhook (с 11.05.2026 long polling жёстко лимитирован; для production — webhook) ---
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = os.environ.get(name, "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off", ""):
+        return default
+    return default
+
+
+MAX_USE_WEBHOOK = _env_bool("MAX_USE_WEBHOOK", False)
+# Полный публичный URL для POST /subscriptions (должен совпадать с маршрутом HTTP-сервера бота)
+MAX_WEBHOOK_PUBLIC_URL = os.environ.get("MAX_WEBHOOK_PUBLIC_URL", "").strip()
+MAX_WEBHOOK_LISTEN_HOST = os.environ.get("MAX_WEBHOOK_LISTEN_HOST", "0.0.0.0")
+MAX_WEBHOOK_LISTEN_PORT = int(os.environ.get("MAX_WEBHOOK_LISTEN_PORT", "8080"))
+
+
+def max_api_webhook_secret_ok(secret: str) -> bool:
+    """Правила MAX API для поля secret в POST /subscriptions."""
+    if not secret:
+        return True
+    return bool(re.fullmatch(r"[a-zA-Z0-9_-]{5,256}", secret))
 ADMIN_IDS = [
     int(x.strip())
     for x in os.environ.get("ADMIN_IDS", "").split(",")
