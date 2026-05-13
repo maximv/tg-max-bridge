@@ -32,14 +32,17 @@ def get_display_name_max(sender: dict) -> str:
 
 
 def strip_markup(text: str) -> str:
-    """Убрать Markdown и HTML разметку — оставить только чистый текст.
-    Примеры: **жирный** → жирный, <b>жирный</b> → жирный
+    """Снять только HTML-теги, оставив остальной текст как есть.
+
+    Markdown-символы (`*`, `_`, `` ` ``, `~`) НЕ удаляем: бот отправляет
+    сообщения без parse_mode (plain text), а MAX API без поля `format`
+    тоже трактует тело как обычный текст. Поэтому такие символы — это
+    часть исходного текста (snake_case, user_id, __init__ и т.п.),
+    а не разметка, и их вырезание ломало смысл сообщений.
+
+    Пример: <b>жирный</b> → жирный, snake_case → snake_case.
     """
-    # Убираем HTML-теги: <b>, </b>, <i>, <code> и т.д.
-    text = re.sub(r"<[^>]+>", "", text)
-    # Убираем Markdown: *жирный*, _курсив_, `код`, ~зачёркнутый~
-    text = re.sub(r"[*_`~]", "", text)
-    return text.strip()
+    return re.sub(r"<[^>]+>", "", text).strip()
 
 
 def format_tg_to_max(user, text: str, topic_name: str = None) -> str:
