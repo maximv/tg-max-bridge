@@ -3,6 +3,7 @@
 
 import httpx
 from config import MAX_BOT_TOKEN, MAX_API_URL
+from ca_bundle import get_verify_path
 
 # Клиент для HTTP-запросов (создаём один раз, используем везде)
 client: httpx.AsyncClient | None = None
@@ -12,7 +13,7 @@ async def get_client() -> httpx.AsyncClient:
     """Получить HTTP-клиент (создаёт при первом вызове)."""
     global client
     if client is None:
-        client = httpx.AsyncClient(timeout=30.0)
+        client = httpx.AsyncClient(timeout=30.0, verify=get_verify_path())
     return client
 
 

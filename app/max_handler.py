@@ -16,6 +16,7 @@ from config import (
     MAX_WEBHOOK_LISTEN_HOST,
     MAX_WEBHOOK_LISTEN_PORT,
 )
+from ca_bundle import get_verify_path
 from connectors import get_connector_for_max, pair_from_max, disconnect_from_max
 from formatter import format_max_to_tg, format_quote, get_display_name_max
 from tg_sender import enqueue_message
@@ -187,7 +188,7 @@ async def register_max_webhook_subscription() -> None:
     }
     if WEBHOOK_SECRET:
         body["secret"] = WEBHOOK_SECRET
-    async with httpx.AsyncClient(timeout=30.0) as http:
+    async with httpx.AsyncClient(timeout=30.0, verify=get_verify_path()) as http:
         await delete_all_max_subscriptions(http)
         resp = await http.post(
             f"{MAX_API_URL}/subscriptions",
@@ -204,7 +205,7 @@ async def register_max_webhook_subscription() -> None:
 
 
 async def shutdown_max_subscriptions() -> None:
-    async with httpx.AsyncClient(timeout=30.0) as http:
+    async with httpx.AsyncClient(timeout=30.0, verify=get_verify_path()) as http:
         await delete_all_max_subscriptions(http)
 
 
@@ -300,7 +301,7 @@ async def poll_max() -> None:
 
     print("[MAX POLL] Запущен, слушаю события из MAX...")
 
-    async with httpx.AsyncClient(timeout=60.0) as http:
+    async with httpx.AsyncClient(timeout=60.0, verify=get_verify_path()) as http:
 
         await delete_all_max_subscriptions(http)
 

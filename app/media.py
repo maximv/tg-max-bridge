@@ -12,6 +12,7 @@ import io
 import httpx
 from aiogram import types as tg_types
 from config import MAX_BOT_TOKEN, MAX_API_URL
+from ca_bundle import get_verify_path
 
 MAX_FILE_LIMIT = 20 * 1024 * 1024  # 20 МБ в байтах
 
@@ -59,7 +60,7 @@ async def upload_to_max(file_data: bytes, file_name: str, upload_type: str = "fi
 
     upload_type: "image" для фото, "file" для документов и видео
     """
-    async with httpx.AsyncClient(timeout=60.0) as http:
+    async with httpx.AsyncClient(timeout=60.0, verify=get_verify_path()) as http:
         # Шаг 1: получаем URL для загрузки
         resp = await http.post(
             f"{MAX_API_URL}/uploads",
@@ -123,7 +124,7 @@ async def send_media_to_max(chat_id: int, file_data: bytes, file_name: str,
     }
 
     # Отправляем сообщение с вложением
-    async with httpx.AsyncClient(timeout=30.0) as http:
+    async with httpx.AsyncClient(timeout=30.0, verify=get_verify_path()) as http:
         # Пауза перед отправкой — MAX может не успеть обработать файл
         import asyncio
         await asyncio.sleep(1)

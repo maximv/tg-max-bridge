@@ -34,6 +34,8 @@ services:
       #   логи сразу видны в docker logs, без задержки
       - CONNECTORS_FILE=/bridge/state/connectors.json
       # ↑ Файл коннекторов хранится в отдельной директории state
+      - SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+      - REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
     depends_on:
       - redis
@@ -41,7 +43,9 @@ services:
 
     volumes:
       - ./state:/bridge/state
-    # ↑ Монтируем директорию состояния; connectors.json создастся автоматически
+      # ↑ Монтируем директорию состояния; connectors.json создастся автоматически
+      - ./certs:/bridge/certs:ro
+      # ↑ CA НУЦ Минцифры для TLS к platform-api2.max.ru (на случай если образ старый)
 
     ports:
       - "127.0.0.1:8080:8080"

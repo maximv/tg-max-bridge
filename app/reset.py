@@ -8,6 +8,7 @@ import asyncio
 import httpx
 import redis.asyncio as aioredis
 from config import TG_BOT_TOKEN, MAX_BOT_TOKEN, MAX_API_URL, REDIS_URL
+from ca_bundle import get_verify_path
 
 TG_API = f"https://api.telegram.org/bot{TG_BOT_TOKEN}"
 
@@ -37,7 +38,7 @@ async def reset_all():
 
     # --- 2. Сбрасываем маркер MAX ---
     print("\n💬 MAX: получаю текущую позицию...")
-    async with httpx.AsyncClient(timeout=10.0) as http:
+    async with httpx.AsyncClient(timeout=10.0, verify=get_verify_path()) as http:
         try:
             # Делаем один запрос к MAX, чтобы узнать текущий marker
             resp = await http.get(
