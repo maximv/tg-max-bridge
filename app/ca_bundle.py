@@ -21,22 +21,18 @@ def get_verify_path() -> str:
 
     chunks: list[str] = []
 
-    env_bundle = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-    if env_bundle and Path(env_bundle).is_file():
-        chunks.append(Path(env_bundle).read_text(encoding="utf-8", errors="ignore"))
-    else:
-        try:
-            import certifi
+    try:
+        import certifi
 
-            chunks.append(Path(certifi.where()).read_text(encoding="utf-8", errors="ignore"))
-        except Exception:
-            system = Path("/etc/ssl/certs/ca-certificates.crt")
-            if system.is_file():
-                chunks.append(system.read_text(encoding="utf-8", errors="ignore"))
+        chunks.append(Path(certifi.where()).read_text(encoding="utf-8", errors="ignore"))
+    except Exception:
+        system = Path("/etc/ssl/certs/ca-certificates.crt")
+        if system.is_file():
+            chunks.append(system.read_text(encoding="utf-8", errors="ignore"))
 
     for cert in sorted(_CERTS_DIR.glob("russian_trusted_*.crt")):
-        text = cert.read_text(encoding="utf-8", errors="ignore").strip()
-        if text:
+        text = cert.read_text(encoding="utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if text and "BEGIN CERTIFICATE" in text:
             chunks.append(text)
 
     fd, path = tempfile.mkstemp(prefix="tg-max-ca-", suffix=".pem")

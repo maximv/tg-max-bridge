@@ -34,8 +34,6 @@ services:
       #   логи сразу видны в docker logs, без задержки
       - CONNECTORS_FILE=/bridge/state/connectors.json
       # ↑ Файл коннекторов хранится в отдельной директории state
-      - SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-      - REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
     depends_on:
       - redis
