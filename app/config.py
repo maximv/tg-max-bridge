@@ -15,7 +15,11 @@ TG_BOT_TOKEN = os.environ["TG_BOT_TOKEN"]
 
 # --- MAX ---
 MAX_BOT_TOKEN = os.environ["MAX_BOT_TOKEN"]         # токен бота MAX
-MAX_API_URL = "https://platform-api.max.ru"          # базовый адрес API MAX
+# С осени 2026 MAX просит platform-api2.max.ru вместо platform-api.max.ru
+MAX_API_URL = os.environ.get(
+    "MAX_API_URL",
+    "https://platform-api2.max.ru",
+).rstrip("/")
 
 # --- Redis ---
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")  # адрес Redis
